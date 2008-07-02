@@ -149,32 +149,32 @@ required-attributes=
 no-docstring-rgx=__.*__
 
 # Regular expression which should only match correct module names
-module-rgx=(([a-z_][a-zA-Z0-9_]+))$
+module-rgx=[a-z_][a-zA-Z0-9_]{2,20}$
 
 # Regular expression which should only match correct module level names
 const-rgx=(([A-Z_][A-Z1-9_]*)|(__.*__))$
 
 # Regular expression which should only match correct class names
-class-rgx=(([a-z_][a-zA-Z0-9_]+))$
+class-rgx=[a-z_][a-zA-Z0-9_]{2,20}$
 
 # Regular expression which should only match correct function names
-function-rgx=([a-z_][a-z0-9_]{2,30})$
+function-rgx=[a-z_][a-zA-Z0-9_]{2,20}$
 
 # Regular expression which should only match correct method names
-method-rgx=(([a-z_][a-zA-Z0-9_]+){2,30})$
+method-rgx=[a-z_][a-zA-Z0-9_]{2,20}$
 
 # Regular expression which should only match correct instance attribute names
-attr-rgx=([a-z_][a-zA-Z0-9_]{2,30})$
+attr-rgx=[a-z_][a-zA-Z0-9_]{2,20}$
 
 # Regular expression which should only match correct argument names
-argument-rgx=([a-z_][a-zA-Z0-9_]{2,30})$
+argument-rgx=[a-z_][a-zA-Z0-9_]{2,20}$
 
 # Regular expression which should only match correct variable names
-variable-rgx=([a-z_][a-zA-Z0-9_]{2,30})$
+variable-rgx=[a-z_][a-zA-Z0-9_]{2,20}$
 
 # Regular expression which should only match correct list comprehension /
 # generator expression variable names
-inlinevar-rgx=[A-Za-z_][A-Za-z0-9_]*$
+inlinevar-rgx=[a-z_][a-zA-Z0-9_]*$
 
 # Good variable names which should always be accepted, separated by a comma
 good-names=w3,e,v,i,j,k,ex,Run,_
