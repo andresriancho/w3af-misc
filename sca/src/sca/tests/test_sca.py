@@ -74,10 +74,13 @@ class TestPHPSCA(PyMockTestCase):
         # 'var2' is controlled by the user but is safe for OS-Commanding
         var2 = vars[1]
         self.assertTrue(var2.controlled_by_user)
-        self.assertTrue('OS_COMMANDING' in var2._safe_for)
+        self.assertFalse(var2.is_tainted_for('OS_COMMANDING'))
         # 'var3' must still be controllable by user
         var3 = vars[2]
         self.assertTrue(var3.controlled_by_user)
+    
+    def test_vars_lineno(self):
+        pass
     
     def test_vuln_functions(self):
         pass

@@ -42,6 +42,11 @@ class PhpSCA(object):
         
         # Define scope
         scope = Scope(parent_scope=None)
+        #
+        # TODO: NO! Move this vars to a parent scope!!!
+        # (it'd be a special *Global* scope!)
+        # When this is done change the "set" calculus below
+        #
         self._user_vars = [VariableDef(uv, -1, scope) for uv in 
                                                         VariableDef.USER_VARS]
         map(scope.add_var, self._user_vars)
@@ -87,21 +92,59 @@ class PhpSCA(object):
 ##        elif type(node) in (phpast.Function):
 ##            new_scope = Scope()
 
+class NodeRep(object):
+    '''
+    Abstract Node representation for AST Nodes 
+    '''
+    
+    def __init__(self, name, lineno, ast_node=None):
+        self._name = name
+        self._lineno = lineno
+        # AST node that originated this 'NodeRep' representation
+        self._ast_node = ast_node
+        
+    
+    def _get_parent_nodes(self, startnode, nodetys=[phpast.Node]):
+        '''
+        Yields parent nodes of type `type`.
+        
+        @param nodetys: The types of nodes to yield. Default to list 
+            containing base type.
+        @param startnode: Start node. 
+        '''
+        parent = getattr(startnode, '_parent_node', None)
+        while parent:
+            if type(parent) in nodetys:
+                yield parent
+                parent = getattr(parent, '_parent_node', None)
 
-class VariableDef(object):
+
+class VariableDef(NodeRep):
+    '''
+    Representation for the AST Variable Definition.
+        (...)
+    '''
     
     USER_VARS = ('$_GET', '$_POST', '$_COOKIES')
+    PRECEDENCE_HIGH = 2
+    PRECEDENCE_LOW = 0
     
     def __init__(self, name, lineno, scope, ast_node=None):
         
-        # Might be either 'Assignment' or 'Variable' type
-        self._name = name
-        self._lineno = lineno
+        NodeRep.__init__(self, name, lineno, ast_node=ast_node)
+        
+        # Containing Scope.
         self._scope = scope
-        self._ast_node = ast_node
+        # Parent Variable
         self._parent = None
+        # Is this var controlled by user?
         self._controlled_by_user = None
+        # Vulns this variable is safe for. 
         self._safe_for = []
+        # This var's precedence
+        self._precedence = None
+        # Being 'root' means that this var doesn't depend on
+        # any other variable.
         if name in VariableDef.USER_VARS:
             self._is_root = True
         else:
@@ -131,14 +174,14 @@ class VariableDef(object):
     @property
     def parent(self):
         '''
-        Get this var's parent
+        Get this var's parent variable
         '''
         if self._is_root:
             return None
         
         if self._parent is None:
             # TODO: Check this!
-            parent = self._get_ancestor(self._ast_node.expr)
+            parent = self._get_ancestor_var(self._ast_node.expr)
             if parent:
                 self._parent = self._scope.get_var(parent.name)
         return self._parent
@@ -164,15 +207,37 @@ class VariableDef(object):
 
         return cbusr
     
+    @property
+    def precedence(self):
+        '''
+        TODO: docstring here.. IMPORTANT!
+        '''
+        if self._precedence is None:
+            
+            conditionals_and_loops_stms = \
+                (phpast.If, phpast.Else, phpast.ElseIf, 
+                 phpast.While, phpast.DoWhile, phpast.For, phpast.Foreach) 
+            
+            if type(getattr(self._ast_node, '_parent_node', None)) \
+                in conditionals_and_loops_stms:
+                self._precedence = VariableDef.PRECEDENCE_HIGH
+        
+        return self._precedence 
+    
     def __eq__(self, ovar):
-        return self._lineno == ovar.lineno and self._name == ovar.name
+        return self._lineno == ovar.lineno and self._name == ovar.name 
+    
+    def __lt__(self, ovar):
+        return self.__eq__(ovar) and self.precedence < ovar.precedence
+    
+    def __le__(self, ovar):
+        return self.__eq__(ovar) and self.precedence <= ovar.precedence
     
     def __hash__(self):
         return hash(self._name)
     
-    def is_tainted_for(self, funcname):
-        # TODO: Implement this!
-        return True
+    def is_tainted_for(self, vulnty):
+        return not vulnty in self._safe_for
     
     def deps(self):
         '''
@@ -183,34 +248,103 @@ class VariableDef(object):
             yield parent
             parent = parent.parent
     
-    # TODO: Refactor this! See below
-    def _get_ancestor(self, node):
+    def _get_ancestor_var(self, node):
         '''
-        Return this var's ancestor.
+        Return ancestor Variable for this var.
         '''
         if type(node) == phpast.Variable:
             # Find out if this var is contained by a "securing" function
             # If this is the case then include mark this variable as 'safe'
             # for that vulnerability.
-            parent = getattr(node, '_parent_node', None)
-            while parent:
-                if type(parent) == phpast.FunctionCall:
-                    for vulnty, fnames in FuncCall.SFDB.iteritems():
-                        for fn in fnames:
-                            if parent.name == fn:
-                                self._safe_for.append(vulnty)
-                parent = getattr(parent, '_parent_node', None)
+            nodetys=[phpast.FunctionCall]
+            for fc in self._get_parent_nodes(node, nodetys=nodetys):
+                vulnty = FuncCall.get_vuln_type_for(fc.name)
+                if vulnty:
+                    self._safe_for.append(vulnty)
             return node
         
+        # TODO: Refactor this! See below in FuncCall
         for f in getattr(node, 'fields', []):
             val = getattr(node, f)
             if isinstance(val, phpast.Node):
                 val = [val]
             if type(val) is list:
                 for ele in val:
-                    res = self._get_ancestor(ele)
+                    res = self._get_ancestor_var(ele)
                     if res:
                         return res
+
+
+class FuncCall(NodeRep):
+    '''
+    Representation for FunctionCall AST node.
+    '''
+    
+    # Potentially Vulnerable Functions Database
+    PVFDB = {
+        'OS_COMMANDING': ('system', 'exec', 'shell_exec'),
+        'XSS': ('echo', 'print', 'printf', 'header'),
+        'FILE_INCLUDE': ('include', 'include_once', 'require', 'require_once'),
+        }
+    IS_CLEAN = 'IS_CLEAN'
+    
+    # Securing Functions Database
+    SFDB = {
+        'OS_COMMANDING': ('escapeshellarg', 'escapeshellcmd'),
+        'XSS': ('htmlentities', 'htmlspecialchars'),
+        'SQL': ('addslashes', 'mysql_real_escape_string',
+                 'mysqli_escape_string', 'mysqli_real_escape_string')
+        }
+    
+    def __init__(self, name, lineno, ast_node, scope):
+        
+        NodeRep.__init__(self, name, lineno, ast_node=ast_node)
+        self._scope = scope
+        self._vuln_type = self._find_if_vulnerable()
+    
+    @property
+    def vuln_type(self):
+        return self._vuln_type
+    
+    def _find_if_vulnerable(self):
+        
+        # TODO: Refactor this! See duplicate code above
+        def get_var_nodes(node):
+            if type(node) == phpast.Variable:
+                varnodes.append(node)
+            else:
+                for f in node.fields:
+                    val = getattr(node, f)
+                    if isinstance(f, phpast.Node):
+                        val = [val]
+                    if type(val) is list:
+                        for ele in val:
+                            get_var_nodes(ele)
+        
+        varnodes = []
+        get_var_nodes(self._ast_node)
+        vulnty = FuncCall.get_vuln_type_for(self._name)
+        if vulnty:
+            for var in varnodes:
+                var = self._scope.get(var.name)
+                if var and var.controlled_by_user and \
+                    var.is_tainted_for(vulnty):
+                    return vulnty
+        return FuncCall.IS_CLEAN
+    
+    @staticmethod
+    def get_vuln_type_for(fname):
+        '''
+        Return the vuln. type for the given function name `fname`. Return None
+        if not found.
+        
+        @param fname: Function name
+        '''
+        for vulnty, pvfnames in FuncCall.PVFDB.iteritems():
+            if any(fname == pvfn for pvfn in pvfnames):
+                return vulnty
+        return None
+            
 
 
 class Scope(object):
@@ -238,61 +372,5 @@ class Scope(object):
     
     def __repr__(self):
         return "Scope [%s]" % ', '.join(v.name for v in self.get_all_vars())
-
-
-class FuncCall(object):
     
-    # Potentially Vulnerable Functions Database
-    PVFDB = {
-        'OS_COMMANDING': ('system', 'exec', 'shell_exec'),
-        'XSS': ('echo', 'print', 'printf', 'header'),
-        'FILE_INCLUDE': ('include', 'include_once', 'require', 'require_once'),
-        }
-    IS_CLEAN = 'IS_CLEAN'
-    
-    # Securing Functions Database
-    SFDB = {
-        'OS_COMMANDING': ('escapeshellarg', 'escapeshellcmd'),
-        'XSS': ('htmlentities', 'htmlspecialchars'),
-        'SQL': ('addslashes', 'mysql_real_escape_string',
-                 'mysqli_escape_string', 'mysqli_real_escape_string')
-        }
-    
-    def __init__(self, name, lineno, func_node, scope):
-        self._lineno = lineno
-        self._name = name
-        self._func_node = func_node
-        self._scope = scope
-        self._vuln_type = self._find_if_vulnerable()
-    
-    @property
-    def vuln_type(self):
-        return self._vuln_type
-    
-    def _find_if_vulnerable(self):
-        
-        # TODO: Refactor this! See above duplicate code
-        def get_var_nodes(node):
-            if type(node) == phpast.Variable:
-                varnodes.append(node)
-            else:
-                for f in node.fields:
-                    val = getattr(node, f)
-                    if isinstance(f, phpast.Node):
-                        val = [val]
-                    if type(val) is list:
-                        for ele in val:
-                            get_var_nodes(ele)
-        
-        for vuln_type, fname in FuncCall.PVFDB.iteritems():
-            if self._name == fname:
-                varnodes = []
-                get_var_nodes(self._func_node)
-                for var in varnodes:
-                    var = self._scope.get(var.name)
-                    if var.controlled_by_user and \
-                        var.is_tainted_for(self._name):
-                        return vuln_type.upper()
-        
-        return FuncCall.IS_CLEAN
     
