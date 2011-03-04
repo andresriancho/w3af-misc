@@ -9,25 +9,43 @@ from phply.phpparse import parser
 import phply.phpast as phpast
 
 
-# We prefer our way. Slight modification to original method.
-# Now we can now know which is the parent of the current node
-# while the AST traversal takes place.
+# We prefer our way. Slight modification to original 'accept' method.
+# Now we can now know which is the parent and siblings of the current
+# node while the AST traversal takes place. This will be *super* useful
+# for pushing/popping the scopes from the stack. 
 Node = phpast.Node
 
 def accept(nodeinst, visitor):
     visitor(nodeinst)
     for field in nodeinst.fields:
         value = getattr(nodeinst, field)
+        
         if isinstance(value, Node):
             # Add parent
             value._parent_node = nodeinst
             value.accept(visitor)
+        
         elif isinstance(value, list):
+            valueset = set(value)
             for item in value:
                 if isinstance(item, Node):
-                    # Add parent
+                    # Set parent
                     item._parent_node = nodeinst
+                    # Set siblings
+                    item._siblings = list(set(valueset - set([item])))
                     item.accept(visitor)
+
+# We also want the Nodes to be hashable
+def __hash__(nodeinst):
+    return hash(nodeinst.lineno)
+
+def is_descendant(nodeinst, onode):
+    return not (onode in getattr(nodeinst, '_siblings', []) or \
+                onode._parent_node == nodeinst)
+
+# Finally add/monkeypatch our methods to phpast.Node class.
+Node.__hash__ = __hash__
+Node.is_descendant = is_descendant
 Node.accept = accept
 
 
@@ -39,24 +57,37 @@ class PhpSCA(object):
     def __init__(self, code, debugmode=False):
         lexer = phplex.lexer.clone()
         self._ast_code = parser.parse(code, lexer=lexer)
-        
+        GlobalParentNodeType = phpast.node('GlobalParentNodeType', \
+                                           ['name', 'children', '_parent_node'])
+        self._global_pnode = GlobalParentNodeType('dummy', self._ast_code, None)
         # Define scope
-        scope = Scope(parent_scope=None)
+        scope = Scope(self._global_pnode, parent_scope=None)
         #
         # TODO: NO! Move this vars to a parent scope!!!
         # (it'd be a special *Global* scope!)
         # When this is done change the "set" calculus below
         #
-        self._user_vars = [VariableDef(uv, -1, scope) for uv in 
-                                                        VariableDef.USER_VARS]
+        self._user_vars = [VariableDef(uv, -1, scope) \
+                           for uv in VariableDef.USER_VARS]
         map(scope.add_var, self._user_vars)
         self._scopes = [scope]
-        # Function calls
+        # FuncCall nodes
         self._functions = []
     
     def start(self):
+        '''
+        Start AST traversal
+        '''
+        global_pnode = self._global_pnode
+        nodesset = set(self._ast_code)
+        
+        # Set parent and siblings
         for node in self._ast_code:
-            node.accept(self._visitor)
+            node._siblings = list(nodesset - set([node]))
+            node._parent_node = global_pnode
+        
+        # Start AST traversal!
+        global_pnode.accept(self._visitor)
     
     def get_vars(self, usr_controlled=False):
         all_vars = []
@@ -75,8 +106,17 @@ class PhpSCA(object):
         return filter(filter_vuln, self._functions)
     
     def _visitor(self, node):
-        
+        '''
+        Visitor method for AST travesal. Used as arg of AST nodes 'accept'
+        method (Visitor Design Pattern)
+        '''
         currscope = self._scopes[-1]
+        
+        # Pop scope from stack? If 'node' is not a child it means that 
+        # we started analyzing a parent or a sibling => this scope is closed
+        if not node.is_descendant(currscope._ast_node):
+            self._scopes.pop()
+            currscope = self._scopes[-1]
         
         if type(node) == phpast.FunctionCall:
             fc = FuncCall(node.name, node.lineno, node, currscope)
@@ -89,8 +129,12 @@ class PhpSCA(object):
                                  currscope, ast_node=node)
             currscope.add_var(newvar)
         
-##        elif type(node) in (phpast.Function):
-##            new_scope = Scope()
+        elif type(node) in (phpast.If, phpast.Else, phpast.ElseIf, phpast.While,
+                            phpast.DoWhile, phpast.For, phpast.Foreach):
+            # Create new Scope and push it onto the stack 
+            newscope = Scope(node, parent_scope=currscope)
+            self._scopes.append(newscope)
+
 
 class NodeRep(object):
     '''
@@ -116,7 +160,15 @@ class NodeRep(object):
         while parent:
             if type(parent) in nodetys:
                 yield parent
-                parent = getattr(parent, '_parent_node', None)
+            parent = getattr(parent, '_parent_node', None)
+    
+    @property
+    def lineno(self):
+        return self._lineno
+    
+    @property
+    def name(self):
+        return self._name
 
 
 class VariableDef(NodeRep):
@@ -125,9 +177,7 @@ class VariableDef(NodeRep):
         (...)
     '''
     
-    USER_VARS = ('$_GET', '$_POST', '$_COOKIES')
-    PRECEDENCE_HIGH = 2
-    PRECEDENCE_LOW = 0
+    USER_VARS = ('$_GET', '$_POST', '$_COOKIES', '$_REQUEST')
     
     def __init__(self, name, lineno, scope, ast_node=None):
         
@@ -141,22 +191,12 @@ class VariableDef(NodeRep):
         self._controlled_by_user = None
         # Vulns this variable is safe for. 
         self._safe_for = []
-        # This var's precedence
-        self._precedence = None
         # Being 'root' means that this var doesn't depend on
         # any other variable.
         if name in VariableDef.USER_VARS:
             self._is_root = True
         else:
             self._is_root = None
-    
-    @property
-    def lineno(self):
-        return self._lineno
-    
-    @property
-    def name(self):
-        return self._name
 
     @property
     def is_root(self):
@@ -207,31 +247,18 @@ class VariableDef(NodeRep):
 
         return cbusr
     
-    @property
-    def precedence(self):
-        '''
-        TODO: docstring here.. IMPORTANT!
-        '''
-        if self._precedence is None:
-            
-            conditionals_and_loops_stms = \
-                (phpast.If, phpast.Else, phpast.ElseIf, 
-                 phpast.While, phpast.DoWhile, phpast.For, phpast.Foreach) 
-            
-            if type(getattr(self._ast_node, '_parent_node', None)) \
-                in conditionals_and_loops_stms:
-                self._precedence = VariableDef.PRECEDENCE_HIGH
-        
-        return self._precedence 
-    
     def __eq__(self, ovar):
-        return self._lineno == ovar.lineno and self._name == ovar.name 
+        return self._scope == ovar._scope and \
+                self._lineno == ovar.lineno and \
+                self._name == ovar.name
     
-    def __lt__(self, ovar):
-        return self.__eq__(ovar) and self.precedence < ovar.precedence
-    
-    def __le__(self, ovar):
-        return self.__eq__(ovar) and self.precedence <= ovar.precedence
+    def __gt__(self, ovar):
+        # This basically indicates precedence. Use it to know if a
+        #  variable should override another one.
+        return self._scope == ovar._scope and \
+                self._name == ovar.name and \
+                self._lineno > ovar.lineno or \
+                self.controlled_by_user
     
     def __hash__(self):
         return hash(self._name)
@@ -258,7 +285,7 @@ class VariableDef(NodeRep):
             # for that vulnerability.
             nodetys=[phpast.FunctionCall]
             for fc in self._get_parent_nodes(node, nodetys=nodetys):
-                vulnty = FuncCall.get_vuln_type_for(fc.name)
+                vulnty = FuncCall.get_vulnty_for_sec(fc.name)
                 if vulnty:
                     self._safe_for.append(vulnty)
             return node
@@ -323,7 +350,7 @@ class FuncCall(NodeRep):
         
         varnodes = []
         get_var_nodes(self._ast_node)
-        vulnty = FuncCall.get_vuln_type_for(self._name)
+        vulnty = FuncCall.get_vulnty_for(self._name)
         if vulnty:
             for var in varnodes:
                 var = self._scope.get(var.name)
@@ -333,7 +360,7 @@ class FuncCall(NodeRep):
         return FuncCall.IS_CLEAN
     
     @staticmethod
-    def get_vuln_type_for(fname):
+    def get_vulnty_for(fname):
         '''
         Return the vuln. type for the given function name `fname`. Return None
         if not found.
@@ -344,27 +371,45 @@ class FuncCall(NodeRep):
             if any(fname == pvfn for pvfn in pvfnames):
                 return vulnty
         return None
-            
-
+    
+    @staticmethod
+    def get_vulnty_for_sec(sfname):
+        '''
+        Return the the vuln. type secured by `sfname`.
+        
+        @param sfname: Securing function name 
+        '''
+        for vulnty, sfnames in FuncCall.SFDB.iteritems():
+            if any(sfname == sfn for sfn in sfnames):
+                return vulnty
+        return None
 
 class Scope(object):
     
-    def __init__(self, parent_scope=None):
-        self._parent_scope = None
+    def __init__(self, ast_node, parent_scope=None):
+        # AST node that defines this scope 
+        self._ast_node = ast_node
+        self._parent_scope = parent_scope
         self._vars = {}
         
-    def add_var(self, var):
-        if self._parent_scope:
-            self._parent_scope.add_var(var)
-        else:
-            if var is None:
-                raise ValueError, "Invalid value for parameter 'var': None"
-            self._vars[var.name] = var
+    def add_var(self, newvar):
+        
+        if newvar is None:
+            raise ValueError, "Invalid value for parameter 'var': None"
+        
+        selfvars = self._vars
+        newvarname = newvar.name
+        varobj = selfvars.get(newvarname)
+        if not varobj or newvar > varobj:
+            selfvars[newvarname] = newvar
+            # Now let the parent scope do his thing
+            if self._parent_scope:
+                self._parent_scope.add_var(newvar)
     
     def get_var(self, varname):
         var = self._vars.get(varname)
         if not var and self._parent_scope:
-            var = self._parent_scope.get_var
+            var = self._parent_scope.get_var(varname)
         return var
     
     def get_all_vars(self):

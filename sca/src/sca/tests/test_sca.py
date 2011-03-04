@@ -10,7 +10,7 @@ from ..sca import PhpSCA, VariableDef
 
 class TestPHPSCA(PyMockTestCase):
     '''
-    Test unit for php static code analyzer
+    Test unit for PHP Static Code Analyzer
     '''
     
     def setUp(self):
@@ -28,13 +28,13 @@ class TestPHPSCA(PyMockTestCase):
               }
             ?>
             '''
-        analyser = PhpSCA(code, debugmode=True)
-        analyser.start()
+        analyzer = PhpSCA(code, debugmode=True)
+        analyzer.start()
         # Get all vars
-        vars = analyser.get_vars(usr_controlled=False)
+        vars = analyzer.get_vars(usr_controlled=False)
         self.assertEquals(5, len(vars))
         # Get user controlled vars
-        usr_cont_vars = analyser.get_vars(usr_controlled=True)
+        usr_cont_vars = analyzer.get_vars(usr_controlled=True)
         self.assertEquals(3, len(usr_cont_vars))
         # Test $foo
         foovar = usr_cont_vars[0]
@@ -66,9 +66,9 @@ class TestPHPSCA(PyMockTestCase):
             }
         ?>
         '''
-        analyser = PhpSCA(code, debugmode=True)
-        analyser.start()
-        vars = analyser.get_vars(usr_controlled=False)
+        analyzer = PhpSCA(code, debugmode=True)
+        analyzer.start()
+        vars = analyzer.get_vars(usr_controlled=False)
         var1 = vars[0]
         self.assertFalse(var1.controlled_by_user)
         # 'var2' is controlled by the user but is safe for OS-Commanding
@@ -82,11 +82,72 @@ class TestPHPSCA(PyMockTestCase):
     def test_vars_lineno(self):
         pass
     
+    def test_var_comp_operators(self):
+        code = '''
+        <?php
+            $var0 = 'bleh';
+            $var1 = $_GET['param'];
+            $var2 = 'blah';
+        ?>
+        '''
+        analyzer = PhpSCA(code, debugmode=True)
+        analyzer.start()
+        vars = analyzer.get_vars(usr_controlled=False)
+        
+        code2 = '''
+        <?php
+            $var0 = 'bleh';
+            
+            $var1 = 'blah';
+            if ($x){
+                $var2 = $_POST['param2'];
+            }
+            else{
+                $var2 = 'blah'.'blah'; 
+            }
+        ?>
+        '''
+        analyzer = PhpSCA(code2, debugmode=True)
+        analyzer.start()
+        vars2 = analyzer.get_vars(usr_controlled=False)
+        
+        c1_var0 = vars[0]
+        c2_var0 = vars2[0]
+        c1_var0._scope = c2_var0._scope
+        self.assertTrue(c2_var0 == c1_var0)
+        
+        c1_var1 = vars[1]
+        c2_var1 = vars2[1]
+        c2_var1._scope = c1_var1._scope
+        self.assertTrue(c2_var1 > c1_var1)
+        
+        c1_var2 = vars[2]
+        c2_var2 = vars2[2]
+        self.assertTrue(c2_var2 > c1_var2)
+    
     def test_vuln_functions(self):
-        pass
+        code = '''
+        <?php
+            $var = $_GET['bleh'];
+            if ($x){
+                $var = 2;
+                // not vuln!
+                system($var);
+            }
+            // vuln for OS COMMANDING!
+            system($var);
+        ?>
+        '''
     
     def test_syntax_error(self):
         pass
-    
-    
 
+
+class TestScope(PyMockTestCase):
+    
+    def setUp(self):
+        PyMockTestCase.setUp(self)
+    
+    def test_add_var(self):
+#        self.assertRaises(ValueError, scope.add_var, None)
+        pass
