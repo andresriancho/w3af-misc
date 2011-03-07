@@ -16,7 +16,10 @@ import phply.phpast as phpast
 Node = phpast.Node
 
 def accept(nodeinst, visitor):
-    visitor(nodeinst)
+    skip = visitor(nodeinst)    
+    if skip:
+        return
+        
     for field in nodeinst.fields:
         value = getattr(nodeinst, field)
         
@@ -73,6 +76,8 @@ class PhpSCA(object):
         self._scopes = [scope]
         # FuncCall nodes
         self._functions = []
+        # Debugging purpose
+        self.debugmode = False
     
     def start(self):
         '''
@@ -118,9 +123,13 @@ class PhpSCA(object):
             self._scopes.pop()
             currscope = self._scopes[-1]
         
-        if type(node) == phpast.FunctionCall:
-            fc = FuncCall(node.name, node.lineno, node, currscope)
+        # Create FuncCall nodes. 'echo' and 'print' are PHP special functions
+        if type(node) in (phpast.FunctionCall, phpast.Echo, phpast.Print):
+            name = getattr(node, 'name', node.__class__.__name__.lower())
+            fc = FuncCall(name, node.lineno, node, currscope)
             self._functions.append(fc)
+            # Stop parsing children nodes
+            return True
         
         # Create the VariableDef
         elif type(node) == phpast.Assignment:
@@ -128,12 +137,17 @@ class PhpSCA(object):
             newvar = VariableDef(varnode.name, varnode.lineno,
                                  currscope, ast_node=node)
             currscope.add_var(newvar)
+            # Stop parsing children nodes
+            return True
         
         elif type(node) in (phpast.If, phpast.Else, phpast.ElseIf, phpast.While,
                             phpast.DoWhile, phpast.For, phpast.Foreach):
             # Create new Scope and push it onto the stack 
             newscope = Scope(node, parent_scope=currscope)
             self._scopes.append(newscope)
+            return False
+        
+        return False
 
 
 class NodeRep(object):
@@ -161,6 +175,18 @@ class NodeRep(object):
             if type(parent) in nodetys:
                 yield parent
             parent = getattr(parent, '_parent_node', None)
+    
+    def _parse(self, node):
+        yield node
+        for f in getattr(node, 'fields', []):
+            val = getattr(node, f)
+            if isinstance(val, phpast.Node):
+                val = [val]
+            if type(val) is list:
+                for ele in val:
+                    ele._parent_node = node
+                    for el in self._parse(ele):
+                        yield el
     
     @property
     def lineno(self):
@@ -220,7 +246,6 @@ class VariableDef(NodeRep):
             return None
         
         if self._parent is None:
-            # TODO: Check this!
             parent = self._get_ancestor_var(self._ast_node.expr)
             if parent:
                 self._parent = self._scope.get_var(parent.name)
@@ -279,61 +304,56 @@ class VariableDef(NodeRep):
         '''
         Return ancestor Variable for this var.
         '''
-        if type(node) == phpast.Variable:
-            # Find out if this var is contained by a "securing" function
-            # If this is the case then include mark this variable as 'safe'
-            # for that vulnerability.
-            nodetys=[phpast.FunctionCall]
-            for fc in self._get_parent_nodes(node, nodetys=nodetys):
-                vulnty = FuncCall.get_vulnty_for_sec(fc.name)
-                if vulnty:
-                    self._safe_for.append(vulnty)
-            return node
-        
-        # TODO: Refactor this! See below in FuncCall
-        for f in getattr(node, 'fields', []):
-            val = getattr(node, f)
-            if isinstance(val, phpast.Node):
-                val = [val]
-            if type(val) is list:
-                for ele in val:
-                    res = self._get_ancestor_var(ele)
-                    if res:
-                        return res
-
+        for n in self._parse(node):
+            if type(n) == phpast.Variable:
+                nodetys=[phpast.FunctionCall]
+                for fc in self._get_parent_nodes(n, nodetys=nodetys):
+                    vulnty = FuncCall.get_vulnty_for_sec(fc.name)
+                    if vulnty:
+                        self._safe_for.append(vulnty)
+                return n
+        return None
 
 class FuncCall(NodeRep):
     '''
     Representation for FunctionCall AST node.
     '''
     
-    # Potentially Vulnerable Functions Database
-    PVFDB = {
-        'OS_COMMANDING': ('system', 'exec', 'shell_exec'),
-        'XSS': ('echo', 'print', 'printf', 'header'),
-        'FILE_INCLUDE': ('include', 'include_once', 'require', 'require_once'),
-        }
     IS_CLEAN = 'IS_CLEAN'
     
+    # Potentially Vulnerable Functions Database
+    PVFDB = {
+        'OS_COMMANDING':
+            ('system', 'exec', 'shell_exec'),
+        'XSS':
+            ('echo', 'print', 'printf', 'header'),
+        'FILE_INCLUDE':
+            ('include', 'include_once', 'require', 'require_once'),
+        'FILE_DISCLOSURE':
+            ('file_get_contents', 'file', 'fread', 'finfo_file'),
+        }
     # Securing Functions Database
     SFDB = {
-        'OS_COMMANDING': ('escapeshellarg', 'escapeshellcmd'),
-        'XSS': ('htmlentities', 'htmlspecialchars'),
-        'SQL': ('addslashes', 'mysql_real_escape_string',
-                 'mysqli_escape_string', 'mysqli_real_escape_string')
+        'OS_COMMANDING': 
+            ('escapeshellarg', 'escapeshellcmd'),
+        'XSS':
+            ('htmlentities', 'htmlspecialchars'),
+        'SQL':
+            ('addslashes', 'mysql_real_escape_string', 'mysqli_escape_string',
+             'mysqli_real_escape_string')
         }
     
     def __init__(self, name, lineno, ast_node, scope):
         
         NodeRep.__init__(self, name, lineno, ast_node=ast_node)
         self._scope = scope
-        self._vuln_type = self._find_if_vulnerable()
+        self._vuln_type = self._find_vuln()
     
     @property
     def vuln_type(self):
         return self._vuln_type
     
-    def _find_if_vulnerable(self):
+    def _find_vuln(self):
         
         # TODO: Refactor this! See duplicate code above
         def get_var_nodes(node):
@@ -342,7 +362,7 @@ class FuncCall(NodeRep):
             else:
                 for f in node.fields:
                     val = getattr(node, f)
-                    if isinstance(f, phpast.Node):
+                    if isinstance(val, phpast.Node):
                         val = [val]
                     if type(val) is list:
                         for ele in val:
@@ -353,7 +373,7 @@ class FuncCall(NodeRep):
         vulnty = FuncCall.get_vulnty_for(self._name)
         if vulnty:
             for var in varnodes:
-                var = self._scope.get(var.name)
+                var = self._scope.get_var(var.name)
                 if var and var.controlled_by_user and \
                     var.is_tainted_for(vulnty):
                     return vulnty

@@ -4,9 +4,9 @@ Created on Feb 28, 2011
 @author: jandalia
 '''
 
-from pymock import PyMockTestCase, method, override, dontcare, set_count
+from pymock import PyMockTestCase #, method, override, dontcare, set_count
 
-from ..sca import PhpSCA, VariableDef
+from ..sca import PhpSCA, VariableDef, FuncCall
 
 class TestPHPSCA(PyMockTestCase):
     '''
@@ -28,7 +28,7 @@ class TestPHPSCA(PyMockTestCase):
               }
             ?>
             '''
-        analyzer = PhpSCA(code, debugmode=True)
+        analyzer = PhpSCA(code)
         analyzer.start()
         # Get all vars
         vars = analyzer.get_vars(usr_controlled=False)
@@ -54,9 +54,7 @@ class TestPHPSCA(PyMockTestCase):
         <?php
             $var1 = $_GET['param'];
             $var1 = 'blah';
-            
             $var2 = escapeshellarg($_GET['param2']);
-            
             $var3 = 'blah';
             if ($x){
                 $var3 = $_POST['param2'];
@@ -66,15 +64,19 @@ class TestPHPSCA(PyMockTestCase):
             }
         ?>
         '''
-        analyzer = PhpSCA(code, debugmode=True)
+        analyzer = PhpSCA(code)
         analyzer.start()
         vars = analyzer.get_vars(usr_controlled=False)
+        
+        # 'var1' is clean
         var1 = vars[0]
         self.assertFalse(var1.controlled_by_user)
+
         # 'var2' is controlled by the user but is safe for OS-Commanding
         var2 = vars[1]
         self.assertTrue(var2.controlled_by_user)
         self.assertFalse(var2.is_tainted_for('OS_COMMANDING'))
+        
         # 'var3' must still be controllable by user
         var3 = vars[2]
         self.assertTrue(var3.controlled_by_user)
@@ -90,7 +92,7 @@ class TestPHPSCA(PyMockTestCase):
             $var2 = 'blah';
         ?>
         '''
-        analyzer = PhpSCA(code, debugmode=True)
+        analyzer = PhpSCA(code)
         analyzer.start()
         vars = analyzer.get_vars(usr_controlled=False)
         
@@ -107,7 +109,7 @@ class TestPHPSCA(PyMockTestCase):
             }
         ?>
         '''
-        analyzer = PhpSCA(code2, debugmode=True)
+        analyzer = PhpSCA(code2)
         analyzer.start()
         vars2 = analyzer.get_vars(usr_controlled=False)
         
@@ -125,7 +127,7 @@ class TestPHPSCA(PyMockTestCase):
         c2_var2 = vars2[2]
         self.assertTrue(c2_var2 > c1_var2)
     
-    def test_vuln_functions(self):
+    def test_vuln_functions_case_one(self):
         code = '''
         <?php
             $var = $_GET['bleh'];
@@ -138,6 +140,29 @@ class TestPHPSCA(PyMockTestCase):
             system($var);
         ?>
         '''
+        analyzer = PhpSCA(code)
+        analyzer.start()
+        funcs = analyzer.get_funcs()
+        # First system call
+        first_sys = funcs[0]
+        self.assertTrue(first_sys.vuln_type == FuncCall.IS_CLEAN)
+        # Second system call
+        sec_sys = funcs[1]
+        self.assertTrue(sec_sys.vuln_type == 'OS_COMMANDING')
+    
+    def test_vuln_functions_case_two(self):
+        code = '''
+        <?
+            $foo = $_GET['bar'];
+            system('ls ' . $foo);
+            echo file_get_contents($foo);
+        ?>
+        '''
+        analyzer = PhpSCA(code)
+        analyzer.start()
+        funcs = analyzer.get_funcs()
+        syscall = funcs[0]
+        
     
     def test_syntax_error(self):
         pass
