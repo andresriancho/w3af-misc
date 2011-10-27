@@ -27,7 +27,7 @@ def anti_spam( user, passwd ):
     #   100 items, and you might have more than that in your Trac instance. I could make it return more
     #   tickets... but the process would be too long and I would get bored.
     #
-    r = p.ticket.query("milestone=1.0&status!=closed")
+    r = p.ticket.query("milestone=1.0&status!=closed&reporter!=anonymous")
     to_remove = []
     to_show = []
 
@@ -36,16 +36,17 @@ def anti_spam( user, passwd ):
     for count, tid in enumerate(r):
         tdata = p.ticket.get(tid)
         desc = tdata[3]['description']
-        to_show.append( (tid,desc) )
+        reporter = tdata[3]['reporter']
+        to_show.append( (tid,reporter,desc) )
         sys.stdout.write('.')
-        if count % 10 == 0:
+        if count % 10 == 0 and count != 0:
             sys.stdout.write('%s' % count)
         sys.stdout.flush()
 
     print 'Choose tickets to remove:'
 
-    for count, (tid, desc) in enumerate(to_show):
-        print '%s description: """%s"""' % ( tid, desc )
+    for count, (tid, reporter, desc) in enumerate(to_show):
+        print '%s [%s] description: """%s"""' % ( tid, reporter, desc )
 
         remove = raw_input("Remove ticket #%s (%s/%s)? (y/Y)" % (tid, count+1, len(to_show)) )
         if remove.lower() == 'y' or remove == '':
