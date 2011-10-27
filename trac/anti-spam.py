@@ -43,18 +43,21 @@ def anti_spam( user, passwd ):
             sys.stdout.write('%s' % count)
         sys.stdout.flush()
 
-    print 'Choose tickets to remove:'
+    if not to_remove:
+        print
+    else:
+        print 'Choose tickets to remove:'
 
-    for count, (tid, reporter, desc) in enumerate(to_show):
-        print '%s [%s] description: """%s"""' % ( tid, reporter, desc )
+        for count, (tid, reporter, desc) in enumerate(to_show):
+            print '%s [%s] description: """%s"""' % ( tid, reporter, desc )
 
-        remove = raw_input("Remove ticket #%s (%s/%s)? (y/Y)" % (tid, count+1, len(to_show)) )
-        if remove.lower() == 'y' or remove == '':
-            to_remove.append( tid )
+            remove = raw_input("Remove ticket #%s (%s/%s)? (y/Y)" % (tid, count+1, len(to_show)) )
+            if remove.lower() == 'y' or remove == '':
+                to_remove.append( tid )
 
-    for count, tid in enumerate(to_remove):
-        p.ticket.delete( tid )
-        print 'Removed ticket #%s (%s/%s)' % (tid, count+1, len(to_remove))
+        for count, tid in enumerate(to_remove):
+            p.ticket.delete( tid )
+            print 'Removed ticket #%s (%s/%s)' % (tid, count+1, len(to_remove))
 
 if __name__ == '__main__':
     main()
