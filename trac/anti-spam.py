@@ -28,6 +28,7 @@ def anti_spam( user, passwd ):
     #   tickets... but the process would be too long and I would get bored.
     #
     r = p.ticket.query("milestone=1.0&status!=closed&reporter!=anonymous")
+    #r = p.ticket.query("reporter!=anonymous")
     to_remove = []
     to_show = []
 
@@ -43,7 +44,7 @@ def anti_spam( user, passwd ):
             sys.stdout.write('%s' % count)
         sys.stdout.flush()
 
-    if not to_remove:
+    if len(to_show) == 0:
         print
     else:
         print 'Choose tickets to remove:'
