@@ -1,9 +1,31 @@
 from datetime import datetime
 from operator import methodcaller
+import cgi
 import copy
 import difflib
 import re
 import xmlrpclib
+
+HTML_OUTPUT_TEMP = '''<html>
+<head>
+<title>Tickets Summary</title>
+</head>
+<body>
+<ul>
+%(tickets)s
+</ul>
+<body>
+</html>
+'''
+TICKETS_LI = '''
+<li>
+    <span title="%(desc)s"><b>[%(rank)s] %(short_desc)s</b><br>
+    &nbsp;&nbsp;&nbsp;&nbsp;<span style="font-size: 10pt">%(tickets)s
+    </span><br>&nbsp;
+</li>'''
+
+TICKET_ALINK = \
+  '<a href="https://sourceforge.net/apps/trac/w3af/ticket/%(id)s">%(id)s</a>'
 
 SF_TRAC_URL = \
     "https://%(user)s:%(passwd)s@sourceforge.net/apps/trac/w3af/login/xmlrpc"
@@ -24,8 +46,11 @@ def get_trac_ticket_ids(topid=None):
         tickets += server.ticket.query(
                         'status=new&component=automatic-bug-report&id=' + args
                         )
-        
     return tickets
+
+def save_ticket_ids(tids):
+    with open('created_tickets.py', 'wb') as f:
+        f.write('tickets = ' + str(tids))
     
 def get_tickets_data(*tids):
     resp = []
@@ -75,14 +100,25 @@ def group_tickets(tickets, simrules=()):
     return groups
 
 def log_tickets(grouped_tickets):
+    
+    tickets = []
     # Typically a list of lists
     for subgrp in grouped_tickets:
-        tkt = subgrp[0]
-        print '%s [%s] <-> %s' % (tkt['id'], len(subgrp), tkt['summary'])
-        print
-#        for tkt in subgrp:
-#            print '%s [%s] <-> %s' % (tkt['id'], tkt['summary'])
-#        print '*'*80
+        desc = cgi.escape(subgrp[0]['summary'][30:].encode('utf-8'), True)
+        tickets.append(
+           TICKETS_LI % {
+                'rank': len(subgrp),
+                'desc': desc,
+                'short_desc': (desc[:100] + '...') \
+                                    if len(desc) > 100 else desc,
+                'tickets': ',\n'.join([TICKET_ALINK % tkt for tkt in subgrp])
+                }
+            )
+    
+    output = HTML_OUTPUT_TEMP % {'tickets': ''.join(tickets)}
+    
+    with open('bugs_ranking.html', 'wb') as f:
+        f.write(output)
 
 def load_ticket_ids():
     try:
@@ -103,23 +139,24 @@ if __name__ == '__main__':
                     re.match(patt, other_summ['summary']))
     
     sim_on_difflib = (lambda x, y: difflib.SequenceMatcher(
-                        None, x['summary'], y['summary']).quick_ratio() > .90)
+                        None, x['summary'], y['summary']).quick_ratio() > .95)
     rules = (sim_on_summ_without_user_input, sim_on_difflib)
     
     # First, do login
     server_login()
     
     # Get tickets
-    ticket_ids = load_ticket_ids()#[5000: 5100]
+    ticket_ids = load_ticket_ids()##[3600:3650]
     if not ticket_ids:
         ticket_ids = get_trac_ticket_ids()
-        # TODO: Save it to Disk
-    last_date = datetime(2011, 1, 1)
+        save_ticket_ids(ticket_ids)
+    
+    start_date = datetime(2011, 1, 1)
     tickets = filter(
-            lambda t: datetime(*t['create_date'].timetuple()[:6]) > last_date,
+            lambda t: datetime(*t['create_date'].timetuple()[:6]) > start_date,
             get_tickets_data(*ticket_ids)
             )
-    # Print report
+    # Generate report
     log_tickets(
         reversed(sorted(
                 group_tickets(tickets, simrules=rules),
@@ -127,3 +164,4 @@ if __name__ == '__main__':
                 )
             )
         )
+    print '### DONE!! ###'
