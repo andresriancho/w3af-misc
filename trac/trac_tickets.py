@@ -11,10 +11,11 @@ HTML_OUTPUT_TEMP = '''<html>
 <title>Tickets Summary</title>
 </head>
 <body>
+Identified %(bug_count)s unique bugs in %(ticket_count)s tickets<br/><br/><br/>
 <ul>
 %(tickets)s
 </ul>
-<body>
+</body>
 </html>
 '''
 TICKETS_LI = '''
@@ -70,7 +71,8 @@ def get_tickets_data(*tids):
                   'summary': tkt[3]['summary'],
                   'reporter': tkt[3]['reporter'],
                   'status': tkt[3]['status'],
-                  'id': tkt[0]}
+                  'id': tkt[0],
+                  'description': tkt[3]['description']}
             resp.append(dd)
         
         # Clean it!
@@ -96,12 +98,16 @@ def group_tickets(tickets, simrules=()):
                     subgroup.append(tkt2)
                     removed.add(tkt2['id'])
                     break
+        print '.',
         groups.append(subgroup)
     return groups
 
 def log_tickets(grouped_tickets):
     
     tickets = []
+    ticket_count = 0
+    bug_count = len(grouped_tickets)
+
     # Typically a list of lists
     for subgrp in grouped_tickets:
         desc = cgi.escape(subgrp[0]['summary'][30:].encode('utf-8'), True)
@@ -114,8 +120,9 @@ def log_tickets(grouped_tickets):
                 'tickets': ',\n'.join([TICKET_ALINK % tkt for tkt in subgrp])
                 }
             )
-    
-    output = HTML_OUTPUT_TEMP % {'tickets': ''.join(tickets)}
+        ticket_count += len(subgrp)
+
+    output = HTML_OUTPUT_TEMP % {'tickets': ''.join(tickets), 'bug_count': bug_count, 'ticket_count': ticket_count}
     
     with open('bugs_ranking.html', 'wb') as f:
         f.write(output)
@@ -137,25 +144,55 @@ if __name__ == '__main__':
         patt = '\[Auto\-Generated\] Bug Report \- \w{32}'
         return bool(re.match(patt, summ['summary']) and
                     re.match(patt, other_summ['summary']))
-    
-    sim_on_difflib = (lambda x, y: difflib.SequenceMatcher(
-                        None, x['summary'], y['summary']).quick_ratio() > .95)
-    rules = (sim_on_summ_without_user_input, sim_on_difflib)
+
+    def sim_on_summary(summ, other_summ):
+        # Extract the information from the summary
+        patt = '\[Auto\-Generated\] Bug Report \- (.*)'
+        try:
+            title1 = re.match( patt, summ['summary'], re.DOTALL ).group(1)
+            title2 = re.match( patt, other_summ['summary'], re.DOTALL ).group(1)
+        except Exception, e:
+            return False
+        else:
+            if len(title1) < 10:
+                return False
+            else:
+                return difflib.SequenceMatcher(None, title1, title2).ratio() > .95
+
+    def sim_on_traceback(summ, other_summ):
+        # Extract the traceback from the description
+        patt = '.*?Traceback:(.*?)Enabled Plugins:.*'
+        try:
+            tb1 = re.match( patt, summ['description'], re.DOTALL ).group(1)
+            tb2 = re.match( patt, other_summ['description'], re.DOTALL ).group(1)
+        except Exception, e:
+            return False
+        else:
+            return difflib.SequenceMatcher(None, tb1, tb2).quick_ratio() > .95
+
+    rules = (sim_on_summ_without_user_input, sim_on_summary, sim_on_traceback)
     
     # First, do login
     server_login()
     
     # Get tickets
-    ticket_ids = load_ticket_ids()##[3600:3650]
+    ticket_ids = load_ticket_ids()##[-50:]
     if not ticket_ids:
+        print 'Getting ticket IDs ...'
         ticket_ids = get_trac_ticket_ids()
         save_ticket_ids(ticket_ids)
+        print 'Ticket IDs successfully retrieved.'
+
+    print 'Getting ticket data (this process might take a while) ...'
     
     start_date = datetime(2011, 1, 1)
     tickets = filter(
             lambda t: datetime(*t['create_date'].timetuple()[:6]) > start_date,
             get_tickets_data(*ticket_ids)
             )
+
+    print 'Ticket data retrieved! Grouping tickets ...'
+
     # Generate report
     log_tickets(
         reversed(sorted(
@@ -164,4 +201,5 @@ if __name__ == '__main__':
                 )
             )
         )
-    print '### DONE!! ###'
+    print
+    print 'Done! Please see "bugs_ranking.html".'
