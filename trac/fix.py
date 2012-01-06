@@ -81,17 +81,19 @@ def retry(tries, delay=3, backoff=2):
 def fix( tid, message, user, passwd ):
     p = xmlrpclib.ServerProxy("https://%s:%s@sourceforge.net/apps/trac/w3af/login/xmlrpc" % (user, passwd))
 
+    mark_as = 'duplicate'
+
     try:
         ticket_info = p.ticket.get( tid )
         if 'resolution' in ticket_info[3]:
             if ticket_info[3]['resolution'] != 'fixed':
-                p.ticket.update(tid, message, {'resolution': 'fixed', 'status': 'closed'}, False)
-                print 'Changed ticket %s status to fixed.' % tid
+                p.ticket.update(tid, message, {'resolution': mark_as, 'status': 'closed'}, False)
+                print 'Changed ticket %s status to %s.' % (tid, mark_as)
             else:
-                print 'Ignoring ticket %s (already fixed)' % tid
+                print 'Ignoring ticket %s (already %s)' % (tid, mark_as)
         else:
-            p.ticket.update(tid, message, {'resolution': 'fixed', 'status': 'closed'}, False)
-            print 'Marked ticket %s as fixed.' % tid
+            p.ticket.update(tid, message, {'resolution': mark_as, 'status': 'closed'}, False)
+            print 'Marked ticket %s as %s.' % (tid, mark_as)
 
     except:
         return False
