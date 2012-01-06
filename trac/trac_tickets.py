@@ -106,10 +106,14 @@ def log_tickets(grouped_tickets):
     
     tickets = []
     ticket_count = 0
-    bug_count = len(grouped_tickets)
+    bug_count = 0
 
     # Typically a list of lists
     for subgrp in grouped_tickets:
+
+        bug_count += 1
+        ticket_count += len(subgrp)
+
         desc = cgi.escape(subgrp[0]['summary'][30:].encode('utf-8'), True)
         tickets.append(
            TICKETS_LI % {
@@ -120,7 +124,7 @@ def log_tickets(grouped_tickets):
                 'tickets': ',\n'.join([TICKET_ALINK % tkt for tkt in subgrp])
                 }
             )
-        ticket_count += len(subgrp)
+
 
     output = HTML_OUTPUT_TEMP % {'tickets': ''.join(tickets), 'bug_count': bug_count, 'ticket_count': ticket_count}
     
@@ -137,6 +141,10 @@ def load_ticket_ids():
 def server_login():
     global server
     server = xmlrpclib.ServerProxy(SF_TRAC_URL % credentials)
+
+def console( msg ):
+    now = datetime.now()
+    print '[%s] %s' % (now, msg)
 
 if __name__ == '__main__':
     ## Group-by similarity rules ##
@@ -170,7 +178,7 @@ if __name__ == '__main__':
         else:
             return difflib.SequenceMatcher(None, tb1, tb2).quick_ratio() > .95
 
-    rules = (sim_on_summ_without_user_input, sim_on_summary, sim_on_traceback)
+    rules = (sim_on_summ_without_user_input, sim_on_traceback, sim_on_summary)
     
     # First, do login
     server_login()
@@ -178,12 +186,12 @@ if __name__ == '__main__':
     # Get tickets
     ticket_ids = load_ticket_ids()##[-50:]
     if not ticket_ids:
-        print 'Getting ticket IDs ...'
+        console('Getting ticket IDs ...')
         ticket_ids = get_trac_ticket_ids()
         save_ticket_ids(ticket_ids)
-        print 'Ticket IDs successfully retrieved.'
+        console('Ticket IDs successfully retrieved.')
 
-    print 'Getting ticket data (this process might take a while) ...'
+    console('Getting ticket data (this process might take a while) ...')
     
     start_date = datetime(2011, 1, 1)
     tickets = filter(
@@ -191,7 +199,7 @@ if __name__ == '__main__':
             get_tickets_data(*ticket_ids)
             )
 
-    print 'Ticket data retrieved! Grouping tickets ...'
+    console('Ticket data retrieved! Grouping tickets ...')
 
     # Generate report
     log_tickets(
@@ -202,4 +210,5 @@ if __name__ == '__main__':
             )
         )
     print
-    print 'Done! Please see "bugs_ranking.html".'
+    console('Done! Please see "bugs_ranking.html".')
+
