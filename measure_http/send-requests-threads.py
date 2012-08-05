@@ -4,6 +4,11 @@ import httplib, sys
 import urllib2
 from Queue import Queue
 
+import time
+from measure import show_stats
+
+NUM_REQUESTS = 5000
+
 concurrent = 200
 
 def doWork():
@@ -30,8 +35,14 @@ for i in range(concurrent):
     t.daemon=True
     t.start()
 
-for i in xrange(5000):
+start_time = time.time()
+
+for i in xrange(NUM_REQUESTS):
     q.put('http://127.0.0.1/' + str(i))
 
 q.join()
+
+end_time = time.time()
+
+show_stats( start_time, end_time, NUM_REQUESTS)
 

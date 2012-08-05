@@ -1,5 +1,8 @@
 #!/usr/bin/python
 
+from measure import show_stats
+import time
+
 import gevent
 from gevent import monkey
 from gevent.queue import JoinableQueue
@@ -26,14 +29,21 @@ def worker():
             q.task_done()
 
 NUM_WORKER_THREADS = 50
+NUM_REQUESTS = 5000
 
 q = JoinableQueue()
 for i in range(NUM_WORKER_THREADS):
      gevent.spawn(worker)
 
-for i in xrange(5000):
+start_time = time.time()
+
+for i in xrange(NUM_REQUESTS):
     url = 'http://127.0.0.1/' + str(i)
     q.put(url)
 
 q.join()  # block until all tasks are done
+
+end_time = time.time()
+
+show_stats( start_time, end_time, NUM_REQUESTS)
 
