@@ -1,7 +1,11 @@
 import argparse
 import sys
+import functools 
+
+from multiprocessing.pool import ThreadPool
 
 from github import Github, GithubException
+
 
 def parse():
     parser = argparse.ArgumentParser(prog='fork_info',
@@ -39,36 +43,54 @@ def analyze_branches(existing_target_branches, fork_list):
 def analyze_commits(project_name, target_repo, existing_target_branches, fork_list):
     print 'Analyzing commits'
 
+    pool = ThreadPool(processes=10)
+
     existing_target_commits = []
 
     for fork_repo in fork_list:
         for target_branch in existing_target_branches:
 
-            print '    Analyzing %s (branch: %s)' % (fork_repo.full_name, target_branch)
+            print '    Analyzing %s (branch: %s) ' % (fork_repo.full_name, target_branch),
             fork_repo_commits = fork_repo.get_commits(sha=target_branch)
 
             max_commits_to_analyze = 30
             analyzed_commits = 0
 
+            fork_commits_to_analyze = []
+
             for fork_comm in fork_repo_commits:
                 if analyzed_commits == max_commits_to_analyze:
                     break
 
+                fork_commits_to_analyze.append(fork_comm)
+
                 analyzed_commits += 1
 
-                if fork_comm.sha in existing_target_commits:
-                    # It's a known commit, nothing to do here
-                    continue
+            partial_c_in_root = functools.partial(commit_is_in_root,
+                                                  existing_target_commits,
+                                                  target_repo, fork_repo)
 
-                try:
-                    target_commit = target_repo.get_commit(fork_comm.sha)
-                except GithubException:
-                    print '    Found new commit %s in %s' % (fork_comm.sha, fork_repo.full_name)
-                else:
-                    # Commit exists in w3af
-                    print '    Added %s to known %s commits.' % (target_commit.sha, project_name)
-                    existing_target_commits.append(target_commit.sha)
-                    continue
+            pool.map(partial_c_in_root, fork_commits_to_analyze)
+            print
+
+def commit_is_in_root(existing_target_commits, target_repo, fork_repo, fork_comm):
+    if fork_comm.sha in existing_target_commits:
+        # It's a known commit, nothing to do here
+        return
+
+    try:
+        target_commit = target_repo.get_commit(fork_comm.sha)
+    except GithubException:
+        print '        Found new commit %s in %s' % (fork_comm.sha, fork_repo.full_name)
+    else:
+        # Commit exists in w3af
+        existing_target_commits.append(target_commit.sha)
+
+        #print '        Added %s to known %s commits.' % (target_commit.sha, project_name)
+        sys.stdout.write('.')
+        sys.stdout.flush()
+
+        return
 
 if __name__ == '__main__':
     args = parse()
