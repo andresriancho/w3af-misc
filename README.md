@@ -1,4 +1,6 @@
-w3af-misc
-=========
+w3af
+====
 
-Misc code loosely related to the w3af project.
+This repo holds miscellaneous files for the [w3af](http://w3af.org/) project. The main repository for the [w3af project](https://github.com/andresriancho/w3af/) can be found [here](https://github.com/andresriancho/w3af/).
+
+
