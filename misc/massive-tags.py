@@ -49,28 +49,32 @@ def tag_file(fname, method_name):
 
 def add_import(fname):
     fcontent = file(fname).read()
-    result = []
     
     if IMPORT not in fcontent:
         
+        result = []
+        added = False
+        
         if FROM_IMPORT in fcontent:
             for line in fcontent.splitlines():
-                if line.startswith(FROM_IMPORT):
+                if line.startswith(FROM_IMPORT) and not added:
                     result.append(IMPORT)
                     result.append(line)
+                    added = True
                 else:
                     result.append(line)
         
         elif IMPORT_IMPORT in fcontent:
             for line in fcontent.splitlines():
-                if line.startswith(IMPORT_IMPORT):
+                if line.startswith(IMPORT_IMPORT) and not added:
                     # Different order than before
                     result.append(line)
                     result.append(IMPORT)
+                    added = True
                 else:
                     result.append(line)
             
-    file(fname, 'w').write('\n'.join(result))
+        file(fname, 'w').write('\n'.join(result))
 
 def add_tag_to_method(fname, method):
     fcontent = file(fname).read()
@@ -101,8 +105,17 @@ def get_tag_targets(input_file):
     tags to apply.
     '''
     result = []
+    line_no = 0
+    
     for line in file(input_file):
-        fname, method = line.split(',')
+        line = line.strip()
+        line_no += 1
+        
+        try:
+            fname, method = line.split(',')
+        except ValueError:
+            print 'Ignoring line #%s' % line_no
+            
         result.append((fname, method))
         
     return result
