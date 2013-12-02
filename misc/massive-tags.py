@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 '''
 Tag tests so they don't run in CircleCI, basically means adding two lines
 to a test case:
