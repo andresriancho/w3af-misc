@@ -115,8 +115,11 @@ def get_tag_targets(input_file):
             fname, method = line.split(',')
         except ValueError:
             print 'Ignoring line #%s' % line_no
-            
-        result.append((fname, method))
+        
+        if os.path.exists(fname):
+            result.append((fname, method))
+        else:
+            print '%s does NOT exist in line #%s' % (fname, line_no)
         
     return result
 
